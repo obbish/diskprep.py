@@ -30,7 +30,7 @@ def stream_source(pass_type, device, block_size, count=None):
     try:
         subprocess.run(command, shell=True, check=True)
     except subprocess.CalledProcessError as e:
-        if "No space left on device" in str(e):
+        if "No space left on device" in e.stderr.decode():
             print(f"Reached the end of {device}. Disk is full; moving to the next pass.")
         else:
             raise
@@ -69,7 +69,7 @@ def path_source(pass_type, device, block_size, count=None, content=None):
     try:
         subprocess.run(command, shell=True, check=True)
     except subprocess.CalledProcessError as e:
-        if "No space left on device" in str(e):
+        if "No space left on device" in e.stderr.decode():
             print(f"Reached the end of {device}. Disk is full; moving to the next pass.")
         else:
             raise
