@@ -29,8 +29,11 @@ def stream_source(pass_type, device, block_size, count=None):
     
     try:
         subprocess.run(command, shell=True, check=True)
-    except subprocess.CalledProcessError:
-        print(f"Reached the end of {device}. Disk is full.")
+    except subprocess.CalledProcessError as e:
+        if "No space left on device" in str(e):
+            print(f"Reached the end of {device}. Disk is full; moving to the next pass.")
+        else:
+            raise
 
 def path_source(pass_type, device, block_size, count=None, content=None):
     """Handle file-based data sources like ones, string, and file."""
@@ -65,26 +68,15 @@ def path_source(pass_type, device, block_size, count=None, content=None):
     
     try:
         subprocess.run(command, shell=True, check=True)
-    except subprocess.CalledProcessError:
-        print(f"Reached the end of {device}. Disk is full.")
-
-    # Clean up only generated temp files
-    if pass_type in ["ones", "string"]:
-        os.remove(temp_file)
-    
-    # Construct the command
-    if count:
-        command = f"dd if={temp_file} of={device} bs={block_size} count={count} status=progress"
-    else:
-        command = f"while :; do cat {temp_file}; done | dd of={device} bs={block_size} status=progress"
-    
-    subprocess.run(command, shell=True, check=True)
-
-    # Clean up only generated temp files
-    if pass_type in ["ones", "string"]:
-        os.remove(temp_file)
-
-import subprocess
+    except subprocess.CalledProcessError as e:
+        if "No space left on device" in str(e):
+            print(f"Reached the end of {device}. Disk is full; moving to the next pass.")
+        else:
+            raise
+    finally:
+        # Clean up only generated temp files
+        if pass_type in ["ones", "string"]:
+            os.remove(temp_file)
 
 def perform_pass(pass_info, device):
     """Perform a single pass based on type and block size until the specified count or full disk."""
@@ -93,44 +85,10 @@ def perform_pass(pass_info, device):
     count = pass_info.get("count")
     
     # Prepare command based on pass type
-    if pass_type == "random":
-        command = f"dd if=/dev/urandom of={device} bs={block_size} status=progress"
-    elif pass_type == "zeros":
-        command = f"dd if=/dev/zero of={device} bs={block_size} status=progress"
-    elif pass_type == "file":
-        file_path = pass_info["content"]
-        command = f"while :; do cat {file_path}; done | dd of={device} bs={block_size} status=progress"
-    elif pass_type == "ones":
-        temp_file = "ones_source.tmp"
-        if not os.path.isfile(temp_file):
-            with open(temp_file, "wb") as f:
-                f.write(b"\xFF" * (1024 * 1024 * 256))  # Create a 256MB file of 0xFF bytes
-        command = f"while :; do cat {temp_file}; done | dd of={device} bs={block_size} status=progress"
-    elif pass_type == "string":
-        temp_file = "string_source.tmp"
-        text = pass_info["content"].encode()
-        if not os.path.isfile(temp_file):
-            with open(temp_file, "wb") as f:
-                for _ in range(256):  # Fill 256MB with the repeated string
-                    f.write(text * (1024 * 1024 // len(text)))
-        command = f"while :; do cat {temp_file}; done | dd of={device} bs={block_size} status=progress"
-
-    # Append count if specified
-    if count:
-        command += f" count={count}"
-
-    try:
-        subprocess.run(command, shell=True, check=True)
-    except subprocess.CalledProcessError as e:
-        if "end of device" in str(e):
-            print("Disk is full; moving to the next pass.")
-        else:
-            print(f"Unexpected error: {e}")
-            raise  # Re-raise unexpected errors
-    finally:
-        # Clean up temporary files after execution
-        if pass_type in ["ones", "string"]:
-            os.remove(temp_file)
+    if pass_type in ["random", "zeros"]:
+        stream_source(pass_type, device, block_size, count)
+    elif pass_type in ["ones", "string", "file"]:
+        path_source(pass_type, device, block_size, count, pass_info.get("content"))
 
 def configure_passes():
     """Allow users to create their own pass schema with real-time schema display."""
