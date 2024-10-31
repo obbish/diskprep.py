@@ -21,6 +21,29 @@ def clear_terminal():
     """Clear the terminal screen."""
     os.system('clear' if os.name == 'posix' else 'cls')
 
+def execute_command(command):
+    """Run the dd command, display real-time output on a single line, and handle 'disk full' message."""
+    try:
+        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        # Process output in real-time
+        for line in process.stderr:
+            if "No space left on device" in line:
+                print("\nDisk full; moving to the next pass.")
+                process.terminate()
+                break
+            # Display progress on a single line, clearing previous content
+            print(f"\r{line.strip()}", end='', flush=True)
+
+        process.wait()  # Ensure the process completes fully
+        print()  # New line after completion
+    except subprocess.CalledProcessError as e:
+        if "No space left on device" in e.stderr:
+            print("Disk full; moving to the next pass.")
+        else:
+            print(f"Unexpected error: {e}")
+            raise  # Re-raise unexpected errors
+
 def stream_source(pass_type, device, block_size, count=None):
     """Build command for live data sources like random and zero."""
     if pass_type == "random":
@@ -65,27 +88,6 @@ def path_source(pass_type, device, block_size, count=None, content=None):
         command = f"while :; do cat {temp_file}; done | dd of={device} bs={block_size} status=progress"
     
     return command
-
-def execute_command(command):
-    """Run the dd command, display real-time output, and handle 'disk full' message."""
-    try:
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        # Process output in real-time
-        for line in process.stderr:
-            if "No space left on device" in line:
-                print("\nDisk full; moving to the next pass.")
-                process.terminate()
-                break
-            print(line, end='')  # Real-time feedback for each line
-
-        process.wait()  # Ensure the process completes fully
-    except subprocess.CalledProcessError as e:
-        if "No space left on device" in e.stderr:
-            print("Disk full; moving to the next pass.")
-        else:
-            print(f"Unexpected error: {e}")
-            raise  # Re-raise unexpected errors
 
 def perform_pass(pass_info, device):
     """Prepare and execute a pass with centralized error handling."""
