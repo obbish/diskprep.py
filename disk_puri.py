@@ -170,8 +170,15 @@ def main():
     # Configure passes
     passes = configure_passes()
 
-    # Confirm before proceeding
-    proceed = input("\nProceed with the above schema? (y/n): ").strip().lower()
+    # Confirm before proceeding, displaying selected device and schema details
+    print(f"\nSelected Device: {device}")
+    print("Pass Schema:")
+    for i, pass_info in enumerate(passes, start=1):
+        count_display = f", Count: {pass_info['count']}" if pass_info["count"] else ""
+        content_display = f" (String: {pass_info['content'][:24]}...)" if pass_info["type"] == "string" else ""
+        print(f"  {i}. Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}{count_display}{content_display}")
+
+    proceed = input("\nProceed with the above schema on the selected device? (y/n): ").strip().lower()
     if proceed != 'y':
         print("Exiting without changes.")
         sys.exit(1)
