@@ -73,11 +73,11 @@ def execute_command(command):
                 print("\nDisk full; moving to the next pass.")
                 process.terminate()
                 break
-            sys.stdout.write(f"\r{line}")  # Update in-place for real-time output
+            # Use carriage return for real-time progress without new lines
+            sys.stdout.write(f"\r{line.strip()}")  # strip() removes trailing newlines
             sys.stdout.flush()
 
-        # Ensure the process terminates fully
-        process.wait()
+        process.wait()  # Ensure the process terminates fully
     except subprocess.CalledProcessError as e:
         if "No space left on device" in e.stderr:
             print("Disk full; moving to the next pass.")
