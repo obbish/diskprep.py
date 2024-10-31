@@ -17,6 +17,10 @@ def cleanup(signum, frame):
 # Register the cleanup function with SIGINT (Ctrl+C)
 signal.signal(signal.SIGINT, cleanup)
 
+def clear_terminal():
+    """Clear the terminal screen."""
+    os.system('clear' if os.name == 'posix' else 'cls')
+
 def stream_source(pass_type, device, block_size, count=None):
     """Build command for live data sources like random and zero."""
     if pass_type == "random":
@@ -63,7 +67,7 @@ def path_source(pass_type, device, block_size, count=None, content=None):
     return command
 
 def execute_command(command):
-    """Run the dd command, display real-time output on a single line, and handle 'disk full' message."""
+    """Run the dd command, display real-time output, and handle 'disk full' message."""
     try:
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -73,11 +77,9 @@ def execute_command(command):
                 print("\nDisk full; moving to the next pass.")
                 process.terminate()
                 break
-            # Display progress on a single line, clearing previous content
-            print(f"\r{line.strip()}", end='', flush=True)
+            print(line, end='')  # Real-time feedback for each line
 
         process.wait()  # Ensure the process completes fully
-        print()  # New line after completion
     except subprocess.CalledProcessError as e:
         if "No space left on device" in e.stderr:
             print("Disk full; moving to the next pass.")
@@ -105,23 +107,23 @@ def perform_pass(pass_info, device):
 def configure_passes(device):
     """Allow users to create their own pass schema with real-time schema display."""
     passes = []
+    clear_terminal()
     print(f"Create your custom pass schema for drive: {device}\n")
     
     while True:
-        # Enhanced pass type prompt with descriptions
-        print("Available pass types:")
+        # Enhanced pass type prompt with descriptions and line breaks for clarity
+        print("\nAvailable pass types:")
         print("  (r)andom - Writes random data to the disk")
         print("  (z)eros  - Writes zeros to the disk")
         print("  (o)nes   - Writes binary ones (0xFF) to the disk")
         print("  (s)tring - Repeats a specified text string across the disk")
         print("  (f)ile   - Repeats the contents of a file across the disk")
-        pass_type = input("Choose a pass type to add (r, z, o, s, f), or type 'start' to execute once, or 'loop' to repeat: ").strip().lower()
+        
+        pass_type = input("\nChoose a pass type to add (r, z, o, s, f), or type 'start' to execute once, or 'loop' to repeat: ").strip().lower()
         
         # Match user input to pass types
-        if pass_type == "start":
-            return passes, "start"
-        elif pass_type == "loop":
-            return passes, "loop"
+        if pass_type == "start" or pass_type == "loop":
+            return passes, pass_type == "loop"
         elif pass_type == "r":
             pass_type = "random"
         elif pass_type == "z":
@@ -133,7 +135,7 @@ def configure_passes(device):
         elif pass_type == "f":
             pass_type = "file"
         else:
-            print("Invalid choice. Please enter one of the letters (r, z, o, s, f), 'start', or 'loop'.")
+            print("Invalid choice. Please enter one of the letters (r, z, o, s, f) or 'start'/'loop' to proceed.")
             continue
         
         # Prompt for content if necessary
@@ -147,19 +149,14 @@ def configure_passes(device):
         else:
             content = None  # No content required for random, zeros, and ones
 
-        # Prompt for block size and count
-        user_input = input("Enter block size and count separated by a space (or press Enter for default 1M block size and fill disk): ").strip()
-        if user_input:
-            parts = user_input.split()
-            block_size = parts[0] if len(parts) > 0 else "1M"
-            count = parts[1] if len(parts) > 1 else None
-        else:
-            block_size, count = "1M", None
+        # Prompt for block size and count with defaults
+        block_size, count = input("Enter block size and count separated by a space (or press Enter for default 1M block size and fill disk): ").strip().split() or ("1M", None)
         
         # Add the pass with type, content, block size, and count
         passes.append({"type": pass_type, "content": content, "block_size": block_size, "count": count})
         
-        # Print the updated schema after each addition
+        # Clear terminal and print the updated schema after each addition for clarity
+        clear_terminal()
         print(f"\nCurrent Pass Schema for drive: {device}")
         for i, p in enumerate(passes, start=1):
             content_display = ""
@@ -170,34 +167,34 @@ def configure_passes(device):
             count_display = f", Count: {p['count']}" if p["count"] else ""
             print(f"{i}. Type: {p['type'].capitalize()}, Block Size: {p['block_size']}{count_display}{content_display}")
     
-    return passes
-
 def main():
-    print("Multi-Pass Disk Preparation Script")
+    clear_terminal()
+    print("Multi-Pass Disk Preparation Script\n")
 
     if os.geteuid() != 0:
         print("This script requires elevated privileges. Please run with sudo.")
         sys.exit(1)
 
-    device = input("\nEnter the destination device (e.g., /dev/diskX): ")
+    device = input("Enter the destination device (e.g., /dev/diskX): ").strip()
 
     # Configure passes
-    passes, mode = configure_passes(device)
+    passes, loop_mode = configure_passes(device)
 
-    # Run each pass based on mode
-    if mode == "start":
-        print("\nExecuting schema once.\n")
+    # Confirm before proceeding
+    proceed = input("\nProceed with the above schema? (y/n): ").strip().lower()
+    if proceed != 'y':
+        print("Exiting without changes.")
+        sys.exit(1)
+
+    # Run each pass
+    while True:
         for i, pass_info in enumerate(passes, start=1):
-            print(f"Running Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
+            print(f"\nRunning Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
             perform_pass(pass_info, device)
-    elif mode == "loop":
-        print("\nExecuting schema in a loop. Press Ctrl+C to stop.\n")
-        while True:
-            for i, pass_info in enumerate(passes, start=1):
-                print(f"Running Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
-                perform_pass(pass_info, device)
+        if not loop_mode:
+            break
 
-    print("Disk preparation completed.")
+    print("\nDisk preparation completed.")
 
 if __name__ == "__main__":
     main()
