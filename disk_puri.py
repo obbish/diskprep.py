@@ -106,12 +106,13 @@ def perform_pass(pass_info, device):
     if command:
         execute_command(command)
 
-def configure_passes():
+def configure_passes(device):
     """Allow users to create their own pass schema with real-time schema display."""
     passes = []
-    print("Create your custom pass schema.\n")
-
+    print(f"Create your custom pass schema for drive: {device}\n")
+    
     while True:
+        # Enhanced pass type prompt with descriptions
         print("Available pass types:")
         print("  (r)andom - Writes random data to the disk")
         print("  (z)eros  - Writes zeros to the disk")
@@ -119,15 +120,25 @@ def configure_passes():
         print("  (s)tring - Repeats a specified text string across the disk")
         print("  (f)ile   - Repeats the contents of a file across the disk")
         pass_type = input("Choose a pass type to add (r, z, o, s, f), or 'done' to finish: ").strip().lower()
-
+        
+        # Match user input to pass types
         if pass_type == "done":
             break
-        elif pass_type in ["r", "z", "o", "s", "f"]:
-            pass_type = {"r": "random", "z": "zeros", "o": "ones", "s": "string", "f": "file"}[pass_type]
+        elif pass_type == "r":
+            pass_type = "random"
+        elif pass_type == "z":
+            pass_type = "zeros"
+        elif pass_type == "o":
+            pass_type = "ones"
+        elif pass_type == "s":
+            pass_type = "string"
+        elif pass_type == "f":
+            pass_type = "file"
         else:
             print("Invalid choice. Please enter one of the letters (r, z, o, s, f) or 'done' to finish.")
             continue
-
+        
+        # Prompt for content if necessary
         if pass_type == "string":
             content = input("Enter the string to fill the disk with: ").strip()
         elif pass_type == "file":
@@ -136,26 +147,31 @@ def configure_passes():
                 print("Invalid file path. Please enter a valid file.")
                 continue
         else:
-            content = None
+            content = None  # No content required for random, zeros, and ones
 
-        # Combined block size and count input
-        user_input = input("Enter block size and count (default: '1M <empty for count>'): ").strip()
-        if user_input:
-            inputs = user_input.split()
-            block_size = inputs[0] if len(inputs) > 0 else "1M"
-            count = inputs[1] if len(inputs) > 1 else None
+        # Prompt for block size and count in one line
+        bs_count_input = input("Enter block size and count (e.g., '4M 10'), or press Enter for default (1M and until full): ").strip()
+        if bs_count_input:
+            parts = bs_count_input.split()
+            block_size = parts[0] if parts else "1M"
+            count = parts[1] if len(parts) > 1 else None
         else:
-            block_size = "1M"
-            count = None
+            block_size, count = "1M", None
 
+        # Add the pass with type, content, block size, and count
         passes.append({"type": pass_type, "content": content, "block_size": block_size, "count": count})
-
-        print("\nCurrent Pass Schema:")
+        
+        # Print the updated schema after each addition
+        print(f"\nCurrent Pass Schema for drive: {device}")
         for i, p in enumerate(passes, start=1):
+            content_display = ""
+            if p["type"] == "string":
+                content_display = f" (String: {p['content'][:24]}...)"  # Show first 24 characters
+            elif p["type"] == "file":
+                content_display = f" (File: {p['content']})"
             count_display = f", Count: {p['count']}" if p["count"] else ""
-            content_display = f" (String: {p['content'][:24]}...)" if p["type"] == "string" else ""
             print(f"{i}. Type: {p['type'].capitalize()}, Block Size: {p['block_size']}{count_display}{content_display}")
-
+    
     return passes
 
 def main():
@@ -167,8 +183,8 @@ def main():
 
     device = input("\nEnter the destination device (e.g., /dev/diskX): ")
 
-    # Configure passes
-    passes = configure_passes()
+    # Configure passes with the device path
+    passes = configure_passes(device)
 
     # Confirm before proceeding, displaying selected device and schema details
     print(f"\nSelected Device: {device}")
