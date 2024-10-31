@@ -2,15 +2,33 @@ import os
 import sys
 import subprocess
 import signal
+import shlex
+import shutil
 
-# Global list to track temporary files for cleanup
-temp_files = []
+# Manage temporary files in a dedicated class
+class TempFileManager:
+    def __init__(self):
+        self.temp_files = []
+
+    def add_temp_file(self, filename):
+        """Add a temp file to the list and create it if needed."""
+        self.temp_files.append(filename)
+        if not os.path.isfile(filename):
+            open(filename, 'w').close()  # Ensure file is created
+
+    def remove_temp_files(self):
+        """Remove all tracked temp files."""
+        for temp_file in self.temp_files:
+            if os.path.isfile(temp_file):
+                os.remove(temp_file)
+        self.temp_files.clear()  # Clear the list after deletion
+
+# Initialize the temp file manager
+temp_file_manager = TempFileManager()
 
 def cleanup(signum, frame):
     """Remove temporary files and exit gracefully."""
-    for temp_file in temp_files:
-        if os.path.isfile(temp_file):
-            os.remove(temp_file)
+    temp_file_manager.remove_temp_files()
     print("\nProcess interrupted. Exiting.")
     sys.exit(0)
 
@@ -18,13 +36,23 @@ def cleanup(signum, frame):
 signal.signal(signal.SIGINT, cleanup)
 
 def clear_terminal():
-    """Clear the terminal screen."""
-    os.system('clear' if os.name == 'posix' else 'cls')
+    """Clear the terminal screen across different platforms."""
+    clear_command = 'cls' if os.name == 'nt' else 'clear'
+    
+    try:
+        if shutil.which(clear_command):
+            subprocess.run(clear_command, check=True)
+        else:
+            print("\n" * shutil.get_terminal_size().lines)
+    except Exception as e:
+        print(f"Could not clear terminal: {e}")
+        print("\n" * 10)  # Basic fallback
 
 def execute_command(command):
     """Run the dd command, display real-time output on a single line, and handle 'disk full' message."""
     try:
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        command_list = shlex.split(command)
+        process = subprocess.Popen(command_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         # Process output in real-time
         for line in process.stderr:
@@ -32,10 +60,9 @@ def execute_command(command):
                 print("\nDisk full; moving to the next pass.")
                 process.terminate()
                 break
-            # Display progress on a single line, clearing previous content
             print(f"\r{line.strip()}", end='', flush=True)
 
-        process.wait()  # Ensure the process completes fully
+        process.wait()
         print()  # New line after completion
     except subprocess.CalledProcessError as e:
         if "No space left on device" in e.stderr:
@@ -65,7 +92,7 @@ def path_source(pass_type, device, block_size, count=None, content=None):
         if not os.path.isfile(temp_file):
             with open(temp_file, "wb") as f:
                 f.write(b"\xFF" * (1024 * 1024 * 256))  # 256MB of 0xFF bytes
-        temp_files.append(temp_file)
+        temp_file_manager.add_temp_file(temp_file)
     
     elif pass_type == "string":
         temp_file = "string_source.tmp"
@@ -73,7 +100,7 @@ def path_source(pass_type, device, block_size, count=None, content=None):
             with open(temp_file, "wb") as f:
                 for _ in range(256):  # Fill 256MB with repeated string
                     f.write(content.encode() * (1024 * 1024 // len(content)))
-        temp_files.append(temp_file)
+        temp_file_manager.add_temp_file(temp_file)
     
     elif pass_type == "file":
         temp_file = content
@@ -81,7 +108,6 @@ def path_source(pass_type, device, block_size, count=None, content=None):
             print(f"Error: File not found at {temp_file}. Skipping this pass.")
             return None
     
-    # Construct the command
     if count:
         command = f"dd if={temp_file} of={device} bs={block_size} count={count} status=progress"
     else:
@@ -96,13 +122,11 @@ def perform_pass(pass_info, device):
     count = pass_info.get("count")
     content = pass_info.get("content")
 
-    # Build the command based on pass type
     if pass_type in ["random", "zeros"]:
         command = stream_source(pass_type, device, block_size, count)
     elif pass_type in ["ones", "string", "file"]:
         command = path_source(pass_type, device, block_size, count, content)
     
-    # Execute the command if it was successfully built
     if command:
         execute_command(command)
 
@@ -113,7 +137,6 @@ def configure_passes(device):
     print(f"Create your custom pass schema for drive: {device}\n")
     
     while True:
-        # Enhanced pass type prompt with descriptions and line breaks for clarity
         print("\nAvailable pass types:")
         print("  (r)andom - Writes random data to the disk")
         print("  (z)eros  - Writes zeros to the disk")
@@ -123,7 +146,6 @@ def configure_passes(device):
         
         pass_type = input("\nChoose a pass type to add (r, z, o, s, f), or type 'start' to execute once, or 'loop' to repeat: ").strip().lower()
         
-        # Match user input to pass types
         if pass_type == "start" or pass_type == "loop":
             return passes, pass_type == "loop"
         elif pass_type == "r":
@@ -140,7 +162,6 @@ def configure_passes(device):
             print("Invalid choice. Please enter one of the letters (r, z, o, s, f) or 'start'/'loop' to proceed.")
             continue
         
-        # Prompt for content if necessary
         if pass_type == "string":
             content = input("Enter a string to write to disk: ").strip()
         elif pass_type == "file":
@@ -149,21 +170,18 @@ def configure_passes(device):
                 print("Invalid file path. Please enter a valid file.")
                 continue
         else:
-            content = None  # No content required for random, zeros, and ones
+            content = None
 
-        # Prompt for block size and count with defaults
         block_size, count = input("Enter block size and count separated by a space (or press Enter for default 1M block size and fill disk): ").strip().split() or ("1M", None)
         
-        # Add the pass with type, content, block size, and count
         passes.append({"type": pass_type, "content": content, "block_size": block_size, "count": count})
         
-        # Clear terminal and print the updated schema after each addition for clarity
         clear_terminal()
         print(f"\nCurrent Pass Schema for drive: {device}")
         for i, p in enumerate(passes, start=1):
             content_display = ""
             if p["type"] == "string":
-                content_display = f" (String: {p['content'][:24]}...)"  # Show first 24 characters
+                content_display = f" (String: {p['content'][:24]}...)"
             elif p["type"] == "file":
                 content_display = f" (File: {p['content']})"
             count_display = f", Count: {p['count']}" if p["count"] else ""
@@ -179,16 +197,13 @@ def main():
 
     device = input("Enter the destination device (e.g., /dev/diskX): ").strip()
 
-    # Configure passes
     passes, loop_mode = configure_passes(device)
 
-    # Confirm before proceeding
     proceed = input("\nProceed with the above schema? (y/n): ").strip().lower()
     if proceed != 'y':
         print("Exiting without changes.")
         sys.exit(1)
 
-    # Run each pass
     while True:
         for i, pass_info in enumerate(passes, start=1):
             print(f"\nRunning Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
