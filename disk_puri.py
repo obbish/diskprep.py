@@ -142,7 +142,7 @@ def configure_passes(device):
         
         # Prompt for content if necessary
         if pass_type == "string":
-            content = input("Enter the string to fill the disk with: ").strip()
+            content = input("Enter a string to write to disk: ").strip()
         elif pass_type == "file":
             content = input("Enter the path to the source file: ").strip()
             if not os.path.isfile(content):
