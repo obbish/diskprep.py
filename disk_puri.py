@@ -63,7 +63,7 @@ def path_source(pass_type, device, block_size, count=None, content=None):
     return command
 
 def execute_command(command):
-    """Run the dd command, display real-time output, and handle 'disk full' message."""
+    """Run the dd command, display real-time output on a single line, and handle 'disk full' message."""
     try:
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -73,7 +73,7 @@ def execute_command(command):
                 print("\nDisk full; moving to the next pass.")
                 process.terminate()
                 break
-            # Clear line and display progress
+            # Display progress on a single line, clearing previous content
             print(f"\r{line.strip()}", end='', flush=True)
 
         process.wait()  # Ensure the process completes fully
