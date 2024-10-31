@@ -73,7 +73,8 @@ def execute_command(command):
                 print("\nDisk full; moving to the next pass.")
                 process.terminate()
                 break
-            print(line, end='')  # Real-time feedback for each line
+            sys.stdout.write(f"\r{line}")  # Update in-place
+            sys.stdout.flush()  # Flush to make the output appear immediately
 
         process.wait()  # Ensure the process completes fully
     except subprocess.CalledProcessError as e:
