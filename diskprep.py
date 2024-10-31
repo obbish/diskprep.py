@@ -68,21 +68,26 @@ def execute_command(command):
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         # Process output in real-time
-        for line in process.stderr:
+        for line in iter(process.stderr.readline, ''):
             if "No space left on device" in line:
                 print("\nDisk full; moving to the next pass.")
                 process.terminate()
                 break
-            sys.stdout.write(f"\r{line}")  # Update in-place
-            sys.stdout.flush()  # Flush to make the output appear immediately
+            sys.stdout.write(f"\r{line}")  # Update in-place for real-time output
+            sys.stdout.flush()
 
-        process.wait()  # Ensure the process completes fully
+        # Ensure the process terminates fully
+        process.wait()
     except subprocess.CalledProcessError as e:
         if "No space left on device" in e.stderr:
             print("Disk full; moving to the next pass.")
         else:
             print(f"Unexpected error: {e}")
             raise  # Re-raise unexpected errors
+    except KeyboardInterrupt:
+        process.terminate()
+        print("\nProcess interrupted by user. Exiting gracefully.")
+        sys.exit(0)
 
 def perform_pass(pass_info, device):
     """Prepare and execute a pass with centralized error handling."""
