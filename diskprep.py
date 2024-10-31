@@ -18,7 +18,7 @@ def cleanup(signum, frame):
 signal.signal(signal.SIGINT, cleanup)
 
 def stream_source(pass_type, device, block_size, count=None):
-    """Handle live data sources like random and zero."""
+    """Build command for live data sources like random and zero."""
     if pass_type == "random":
         command = f"dd if=/dev/urandom of={device} bs={block_size} status=progress"
     elif pass_type == "zeros":
@@ -27,16 +27,10 @@ def stream_source(pass_type, device, block_size, count=None):
     if count:
         command += f" count={count}"
     
-    try:
-        subprocess.run(command, shell=True, check=True)
-    except subprocess.CalledProcessError as e:
-        if "No space left on device" in e.stderr.decode():
-            print(f"Reached the end of {device}. Disk is full; moving to the next pass.")
-        else:
-            raise
+    return command
 
 def path_source(pass_type, device, block_size, count=None, content=None):
-    """Handle file-based data sources like ones, string, and file."""
+    """Build command for file-based data sources like ones, string, and file."""
     temp_file = None
     
     if pass_type == "ones":
@@ -58,7 +52,7 @@ def path_source(pass_type, device, block_size, count=None, content=None):
         temp_file = content
         if not os.path.isfile(temp_file):
             print(f"Error: File not found at {temp_file}. Skipping this pass.")
-            return
+            return None
     
     # Construct the command
     if count:
@@ -66,29 +60,37 @@ def path_source(pass_type, device, block_size, count=None, content=None):
     else:
         command = f"while :; do cat {temp_file}; done | dd of={device} bs={block_size} status=progress"
     
+    return command
+
+def execute_command(command):
+    """Run the dd command and handle 'disk full' message."""
     try:
-        subprocess.run(command, shell=True, check=True)
+        result = subprocess.run(command, shell=True, check=True, text=True, capture_output=True)
+        if "No space left on device" in result.stderr:
+            print("Disk full; moving to the next pass.")
     except subprocess.CalledProcessError as e:
-        if "No space left on device" in e.stderr.decode():
-            print(f"Reached the end of {device}. Disk is full; moving to the next pass.")
+        if "No space left on device" in e.stderr:
+            print("Disk full; moving to the next pass.")
         else:
-            raise
-    finally:
-        # Clean up only generated temp files
-        if pass_type in ["ones", "string"]:
-            os.remove(temp_file)
+            print(f"Unexpected error: {e}")
+            raise  # Re-raise unexpected errors
 
 def perform_pass(pass_info, device):
-    """Perform a single pass based on type and block size until the specified count or full disk."""
+    """Prepare and execute a pass with centralized error handling."""
     pass_type = pass_info["type"]
     block_size = pass_info["block_size"]
     count = pass_info.get("count")
-    
-    # Prepare command based on pass type
+    content = pass_info.get("content")
+
+    # Build the command based on pass type
     if pass_type in ["random", "zeros"]:
-        stream_source(pass_type, device, block_size, count)
+        command = stream_source(pass_type, device, block_size, count)
     elif pass_type in ["ones", "string", "file"]:
-        path_source(pass_type, device, block_size, count, pass_info.get("content"))
+        command = path_source(pass_type, device, block_size, count, content)
+    
+    # Execute the command if it was successfully built
+    if command:
+        execute_command(command)
 
 def configure_passes():
     """Allow users to create their own pass schema with real-time schema display."""
