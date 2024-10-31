@@ -63,7 +63,7 @@ def path_source(pass_type, device, block_size, count=None, content=None):
     return command
 
 def execute_command(command):
-    """Run the dd command and handle 'disk full' message with real-time output."""
+    """Run the dd command, display real-time output, and handle 'disk full' message."""
     try:
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -71,10 +71,11 @@ def execute_command(command):
         for line in process.stderr:
             if "No space left on device" in line:
                 print("\nDisk full; moving to the next pass.")
+                process.terminate()
                 break
-            print(line, end='')  # Print each line as it's received for real-time feedback
+            print(line, end='')  # Real-time feedback for each line
 
-        process.wait()  # Ensure process completes
+        process.wait()  # Ensure the process completes fully
     except subprocess.CalledProcessError as e:
         if "No space left on device" in e.stderr:
             print("Disk full; moving to the next pass.")
