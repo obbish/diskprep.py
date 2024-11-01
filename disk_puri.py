@@ -68,16 +68,19 @@ def generate_ones_and_string_content(pass_type, content, block_size):
     elif pass_type == "string":
         return (content.encode() * (chunk_size // len(content.encode())))[:chunk_size]
 
-def write_content_to_device(content, device):
-    with open(device, "wb") as dev:
+def write_content_to_device_via_dd(content, device, block_size):
+    """Pipes in-memory content to 'dd' for infinite writes to display status."""
+    dd_command = ["dd", f"of={device}", f"bs={block_size}", "status=progress"]
+    with subprocess.Popen(dd_command, stdin=subprocess.PIPE) as process:
         while True:
-            dev.write(content)
+            process.stdin.write(content)
+            process.stdin.flush()
 
 def path_source(pass_type, device, block_size, count=None, content=None):
     if pass_type == "ones" or pass_type == "string":
         in_memory_content = generate_ones_and_string_content(pass_type, content, block_size)
         if count is None:
-            write_content_to_device(in_memory_content, device)
+            write_content_to_device_via_dd(in_memory_content, device, block_size)
         else:
             command = ["dd", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
             with open('/dev/stdin', 'wb') as stdin:
