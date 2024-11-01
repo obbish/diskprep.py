@@ -81,9 +81,11 @@ def path_source(pass_type, device, block_size, count=None, content=None):
         temp_file = "string_source.tmp"
         if not os.path.isfile(temp_file):
             with open(temp_file, "wb") as f:
-                # Repeat the string to fill a 256MB file without modifying it
                 chunk = content.encode()
-                for _ in range(256 * 1024 * 1024 // len(chunk)):
+                chunk_size = len(chunk)
+                target_size = 256 * 1024 * 1024  # 256 MB target file size
+                full_repeats = target_size // chunk_size  # Only full repetitions
+                for _ in range(full_repeats):
                     f.write(chunk)
         temp_file_manager.add_temp_file(temp_file)
     
