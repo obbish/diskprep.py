@@ -39,18 +39,27 @@ def clear_terminal():
         print(f"Could not clear terminal: {e}")
         print("\n" * 10)
 
-def execute_command(command):
-    """Run the dd command, display real-time output on a single line, and handle 'disk full' message."""
+def execute_command(command, input_data):
+    """Run the dd command, display real-time output, and handle 'disk full' message."""
     try:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        for line in process.stderr:
-            if "No space left on device" in line:
-                print("\nDisk full; stopping.")
-                process.terminate()
-                return True  # Signal disk is full
-            print(f"\r{line.strip()}", end='', flush=True)
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-        process.wait()
+        # Continuously write data to the process's stdin in chunks until it completes or fails.
+        while True:
+            # Write a chunk of input_data to the dd process
+            process.stdin.write(input_data.read())
+            process.stdin.flush()  # Ensure data is sent to dd
+            
+            # Check dd's stderr for progress updates and disk full messages
+            for line in iter(process.stderr.readline, ""):
+                if "No space left on device" in line:
+                    print("\nDisk full; stopping.")
+                    process.terminate()
+                    return True  # Signal disk is full
+                print(f"\r{line.strip()}", end='', flush=True)
+
+            if process.poll() is not None:
+                break  # Exit if dd process completes
         print()
         return False
     except subprocess.CalledProcessError as e:
@@ -87,18 +96,21 @@ def generate_temp_source_in_memory(pass_type, content=None, size_mb=64):
     return buffer
 
 def path_source(pass_type, device, block_size, count=None, content=None):
-    """Constructs the dd command using in-memory source data."""
+    """Constructs the dd command with in-memory input data."""
     temp_file = generate_temp_source_in_memory(pass_type, content)
     if not temp_file:
         return None
+
+    # Prepare dd command with the in-memory input data
     if count:
-        return ["dd", f"if=/dev/stdin", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
-    return ["bash", "-c", f"while true; do cat /dev/stdin; done | dd of={device} bs={block_size} status=progress"]
+        return ["dd", f"if=/dev/stdin", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"], temp_file
+    else:
+        return ["dd", f"if=/dev/stdin", f"of={device}", f"bs={block_size}", "status=progress"], temp_file
 
 def perform_pass(pass_info, device):
-    command = path_source(pass_info["type"], device, pass_info["block_size"], pass_info.get("count"), pass_info.get("content"))
+    command, input_data = path_source(pass_info["type"], device, pass_info["block_size"], pass_info.get("count"), pass_info.get("content"))
     if command:
-        return execute_command(command)
+        return execute_command(command, input_data)
     return False
 
 def configure_passes(device):
