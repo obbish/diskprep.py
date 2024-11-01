@@ -49,11 +49,12 @@ def execute_command(command):
             if "No space left on device" in line:
                 print("\nDisk full; moving to the next pass.")
                 process.terminate()
-                break
+                return True  # Signal that disk is full
             print(f"\r{line.strip()}", end='', flush=True)
 
         process.wait()  # Ensure the process completes fully
         print()  # New line after completion
+        return False  # Signal that disk is not full
     except subprocess.CalledProcessError as e:
         print(f"Unexpected error: {e}")
         raise
@@ -108,11 +109,13 @@ def perform_pass(pass_info, device):
 
     if pass_type in ["random", "zeros"]:
         command = stream_source(pass_type, device, block_size, count)
-        execute_command(command)
+        disk_full = execute_command(command)
     else:
         command = path_source(pass_type, device, block_size, count, content)
         if command:
-            execute_command(command)
+            disk_full = execute_command(command)
+    
+    return disk_full
 
 def configure_passes(device):
     passes = []
@@ -190,7 +193,10 @@ def main():
     while True:
         for i, pass_info in enumerate(passes, start=1):
             print(f"\nRunning Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
-            perform_pass(pass_info, device)
+            disk_full = perform_pass(pass_info, device)
+            if disk_full:
+                print("Exiting loop as disk is full.")
+                return  # Exit the function if the disk is full
         if not loop_mode:
             break
 
