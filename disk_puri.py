@@ -43,19 +43,16 @@ def clear_terminal():
 def execute_command(command):
     """Run the command with a pseudo-terminal to display real-time output for commands like 'dd'."""
     try:
-        # Open a pseudo-terminal to capture real-time output
         master_fd, slave_fd = pty.openpty()
-        
         process = subprocess.Popen(command, stdout=slave_fd, stderr=slave_fd, text=True)
-        os.close(slave_fd)  # Close slave FD in the parent process
+        os.close(slave_fd)
 
-        # Read output from the master FD
         with os.fdopen(master_fd) as fd:
             for line in fd:
                 print(f"\r{line.strip()}", end='', flush=True)
 
         process.wait()
-        print()  # New line after completion
+        print()
     except subprocess.CalledProcessError as e:
         print(f"Unexpected error: {e}")
         raise
@@ -75,11 +72,14 @@ def generate_ones_and_string_content(pass_type, content, block_size):
         return (content.encode() * (chunk_size // len(content.encode())))[:chunk_size]
 
 def write_content_to_device_via_dd(content, device, block_size):
-    """Pipes in-memory content to 'dd' for infinite writes to display status."""
+    """Pipes a large in-memory buffer of repeated content to 'dd' for faster writes."""
+    repeat_size = 256 * 1024 * 1024  # 256 MB
+    large_buffer = (content * (repeat_size // len(content)))[:repeat_size]
+
     dd_command = ["dd", f"of={device}", f"bs={block_size}", "status=progress"]
     with subprocess.Popen(dd_command, stdin=subprocess.PIPE) as process:
         while True:
-            process.stdin.write(content)
+            process.stdin.write(large_buffer)
             process.stdin.flush()
 
 def path_source(pass_type, device, block_size, count=None, content=None):
