@@ -108,11 +108,11 @@ def path_source(pass_type, device, block_size, count=None, content=None):
             return None
     
     if count:
-        command = ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
+        # Return the command as a list if a finite count is specified
+        return ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
     else:
-        command = ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", "status=progress"]
-    
-    return command
+        # Return only the temp_file path if count is None
+        return temp_file
 
 def write_file_to_device_until_full(temp_file, device, block_size):
     """Writes the contents of temp_file to the device repeatedly until disk space is exhausted."""
@@ -138,15 +138,14 @@ def perform_pass(pass_info, device):
     count = pass_info.get("count")
     content = pass_info.get("content")
 
-    # Get the command list directly
     if pass_type in ["random", "zeros"]:
         command = stream_source(pass_type, device, pass_info["block_size"], count)
         execute_command(command)
     elif pass_type in ["ones", "string", "file"]:
         temp_file = path_source(pass_type, device, pass_info["block_size"], count, content)
-        if temp_file and count is None:  # No count means "until full"
+        if isinstance(temp_file, str):  # temp_file path for infinite write
             write_file_to_device_until_full(temp_file, device, block_size)
-        elif temp_file:
+        elif temp_file:  # Command list for finite write
             execute_command(temp_file)
 
 def configure_passes(device):
