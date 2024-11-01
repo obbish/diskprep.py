@@ -64,40 +64,40 @@ def stream_source(pass_type, device, block_size, count=None):
         command.append(f"count={count}")
     return command
 
-def generate_ones_and_string_content(pass_type, content, block_size):
-    chunk_size = int(block_size.rstrip("M")) * 1024 * 1024
-    if pass_type == "ones":
-        return b"\xFF" * chunk_size
-    elif pass_type == "string":
-        return (content.encode() * (chunk_size // len(content.encode())))[:chunk_size]
-
-def write_content_to_device_via_dd(content, device, block_size):
-    """Pipes a large in-memory buffer of repeated content to 'dd' for faster writes."""
-    repeat_size = 256 * 1024 * 1024  # 256 MB
-    large_buffer = (content * (repeat_size // len(content)))[:repeat_size]
-
-    dd_command = ["dd", f"of={device}", f"bs={block_size}", "status=progress"]
-    with subprocess.Popen(dd_command, stdin=subprocess.PIPE) as process:
-        while True:
-            process.stdin.write(large_buffer)
-            process.stdin.flush()
-
 def path_source(pass_type, device, block_size, count=None, content=None):
-    if pass_type == "ones" or pass_type == "string":
-        in_memory_content = generate_ones_and_string_content(pass_type, content, block_size)
-        if count is None:
-            write_content_to_device_via_dd(in_memory_content, device, block_size)
-        else:
-            command = ["dd", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
-            with open('/dev/stdin', 'wb') as stdin:
-                stdin.write(in_memory_content * int(count))
-            command.insert(1, "if=/dev/stdin")
-            return command
+    """Build command list for file-based data sources like ones, string, and file."""
+    temp_file = None
+    
+    if pass_type == "ones":
+        temp_file = "ones_source.tmp"
+        if not os.path.isfile(temp_file):
+            with open(temp_file, "wb") as f:
+                f.write(b"\xFF" * (1024 * 1024 * 256))  # 256MB of 0xFF bytes
+        temp_file_manager.add_temp_file(temp_file)
+    
+    elif pass_type == "string":
+        temp_file = "string_source.tmp"
+        if not os.path.isfile(temp_file):
+            with open(temp_file, "wb") as f:
+                # Repeat the string to fill a 256MB file without modifying it
+                chunk = content.encode()
+                for _ in range(256 * 1024 * 1024 // len(chunk)):
+                    f.write(chunk)
+        temp_file_manager.add_temp_file(temp_file)
+    
     elif pass_type == "file":
-        if not os.path.isfile(content):
-            print(f"Error: File not found at {content}. Skipping this pass.")
+        temp_file = content
+        if not os.path.isfile(temp_file):
+            print(f"Error: File not found at {temp_file}. Skipping this pass.")
             return None
-        return ["dd", f"if={content}", f"of={device}", f"bs={block_size}", "status=progress"]
+
+    # Construct the command to use the temp file with dd
+    if count:
+        command = ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
+    else:
+        command = ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", "status=progress"]
+    
+    return command
 
 def perform_pass(pass_info, device):
     pass_type = pass_info["type"]
