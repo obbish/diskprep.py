@@ -61,12 +61,16 @@ def execute_command(command, input_data):
         # Read and display real-time output from the PTY (dd’s progress)
         while True:
             output = os.read(master_fd, 1024).decode()  # Read from PTY in 1KB chunks
+            if "No space left on device" in output:
+                print("\nDisk full; moving to next pass.")
+                process.terminate()  # Exit the process when disk is full
+                return True
             if not output:
                 break
             print(output, end='', flush=True)
 
         process.wait()
-        return process.returncode == 0
+        return False  # Return False if no "disk full" message was encountered
     except subprocess.CalledProcessError as e:
         print(f"Unexpected error: {e}")
         raise
@@ -102,7 +106,7 @@ def generate_temp_source_in_memory(pass_type, content=None, size_mb=64):
     buffer.seek(0)  # Reset pointer to the start
     return buffer
 
-def path_source(pass_type, device, block_size, count=None, content=None):
+def path_source(pass_type, device, block_size="1M", count=None, content=None):
     """Constructs the dd command with in-memory input data."""
     temp_file = generate_temp_source_in_memory(pass_type, content)
     if not temp_file:
@@ -179,8 +183,9 @@ def main():
         for i, pass_info in enumerate(passes, start=1):
             print(f"\nRunning Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
             if perform_pass(pass_info, device):
-                print("Disk is full. Exiting.")
-                return  # Exit if the disk is full
+                print("Disk is full. Moving to the next pass.")
+            elif pass_info.get("count"):
+                print("Count limit reached. Moving to the next pass.")
 
         if not loop_mode:
             break  # Exit after one iteration if not in loop mode
