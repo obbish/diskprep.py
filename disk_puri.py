@@ -43,81 +43,60 @@ def execute_command(command):
     """Run the dd command, display real-time output on a single line, and handle 'disk full' message."""
     try:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        # Process output in real-time from stderr (where dd sends progress)
         for line in process.stderr:
             if "No space left on device" in line:
-                print("\nDisk full; moving to the next pass.")
+                print("\nDisk full; stopping.")
                 process.terminate()
-                return True  # Signal that disk is full
+                return True  # Signal disk is full
             print(f"\r{line.strip()}", end='', flush=True)
 
-        process.wait()  # Ensure the process completes fully
-        print()  # New line after completion
-        return False  # Signal that disk is not full
+        process.wait()
+        print()
+        return False
     except subprocess.CalledProcessError as e:
         print(f"Unexpected error: {e}")
         raise
 
-def stream_source(pass_type, device, block_size, count=None):
-    command = ["dd", "if=/dev/urandom" if pass_type == "random" else "if=/dev/zero", 
-               f"of={device}", f"bs={block_size}", "status=progress"]
-    if count:
-        command.append(f"count={count}")
-    return command
-
-def path_source(pass_type, device, block_size, count=None, content=None):
-    """Build command list for file-based data sources like ones, string, and file."""
-    temp_file = None
-    
+def prepare_temp_file(pass_type, content):
+    """Prepares a temp file with repeated data if needed."""
     if pass_type == "ones":
         temp_file = "ones_source.tmp"
         if not os.path.isfile(temp_file):
             with open(temp_file, "wb") as f:
                 f.write(b"\xFF" * (1024 * 1024 * 256))  # 256MB of 0xFF bytes
         temp_file_manager.add_temp_file(temp_file)
-    
     elif pass_type == "string":
         temp_file = "string_source.tmp"
         if not os.path.isfile(temp_file):
             with open(temp_file, "wb") as f:
                 chunk = content.encode()
-                chunk_size = len(chunk)
-                target_size = 256 * 1024 * 1024  # 256 MB target file size
-                full_repeats = target_size // chunk_size  # Only full repetitions
-                for _ in range(full_repeats):
-                    f.write(chunk)
+                full_repeats = (256 * 1024 * 1024) // len(chunk)
+                f.write(chunk * full_repeats)
         temp_file_manager.add_temp_file(temp_file)
-    
-    elif pass_type == "file":
-        temp_file = content
-        if not os.path.isfile(temp_file):
-            print(f"Error: File not found at {temp_file}. Skipping this pass.")
-            return None
-
-    # Construct the command to use the temp file with dd
-    if count:
-        command = ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
     else:
-        command = ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", "status=progress"]
-    
-    return command
+        return None
+    return temp_file
+
+def path_source(pass_type, device, block_size, count=None, content=None):
+    """Constructs the dd command."""
+    if pass_type in ["ones", "string"]:
+        temp_file = prepare_temp_file(pass_type, content)
+        if not temp_file:
+            return None
+        if count:
+            return ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
+        return ["bash", "-c", f"while true; do cat {temp_file}; done | dd of={device} bs={block_size} status=progress"]
+    elif pass_type == "random":
+        return ["dd", "if=/dev/urandom", f"of={device}", f"bs={block_size}", "status=progress", f"count={count}" if count else ""]
+    elif pass_type == "zeros":
+        return ["dd", "if=/dev/zero", f"of={device}", f"bs={block_size}", "status=progress", f"count={count}" if count else ""]
+    return None
 
 def perform_pass(pass_info, device):
-    pass_type = pass_info["type"]
-    block_size = pass_info["block_size"]
-    count = pass_info.get("count")
-    content = pass_info.get("content")
-
-    if pass_type in ["random", "zeros"]:
-        command = stream_source(pass_type, device, block_size, count)
-        disk_full = execute_command(command)
-    else:
-        command = path_source(pass_type, device, block_size, count, content)
-        if command:
-            disk_full = execute_command(command)
-    
-    return disk_full
+    command = path_source(pass_info["type"], device, pass_info["block_size"], pass_info.get("count"), pass_info.get("content"))
+    if command:
+        return execute_command(command)
+    return False
 
 def configure_passes(device):
     passes = []
@@ -150,28 +129,18 @@ def configure_passes(device):
             print("Invalid choice. Please enter one of the letters (r, z, o, s, f) or 'start'/'loop' to proceed.")
             continue
         
-        if pass_type == "string":
-            content = input("Enter a string to write to disk: ").strip()
-        elif pass_type == "file":
-            content = input("Enter the path to the source file: ").strip()
-            if not os.path.isfile(content):
-                print("Invalid file path. Please enter a valid file.")
-                continue
-        else:
-            content = None
+        content = input("Enter a string to write to disk: ").strip() if pass_type == "string" else input("Enter the path to the source file: ").strip() if pass_type == "file" else None
+        if pass_type == "file" and not os.path.isfile(content):
+            print("Invalid file path. Please enter a valid file.")
+            continue
 
         block_size, count = input("Enter block size and count separated by a space (or press Enter for default 1M block size and fill disk): ").strip().split() or ("1M", None)
-        
         passes.append({"type": pass_type, "content": content, "block_size": block_size, "count": count})
         
         clear_terminal()
         print(f"\nCurrent Pass Schema for drive: {device}")
         for i, p in enumerate(passes, start=1):
-            content_display = ""
-            if p["type"] == "string":
-                content_display = f" (String: {p['content'][:24]}...)"
-            elif p["type"] == "file":
-                content_display = f" (File: {p['content']})"
+            content_display = f" (String: {p['content'][:24]}...)" if p["type"] == "string" else f" (File: {p['content']})" if p["type"] == "file" else ""
             count_display = f", Count: {p['count']}" if p["count"] else ""
             print(f"{i}. Type: {p['type'].capitalize()}, Block Size: {p['block_size']}{count_display}{content_display}")
 
@@ -184,7 +153,6 @@ def main():
         sys.exit(1)
 
     device = input("Enter the destination device (e.g., /dev/diskX): ").strip()
-
     passes, loop_mode = configure_passes(device)
 
     proceed = input("\nProceed with the above schema? (y/n): ").strip().lower()
@@ -192,15 +160,16 @@ def main():
         print("Exiting without changes.")
         sys.exit(1)
 
-    while True:
-        for i, pass_info in enumerate(passes, start=1):
-            print(f"\nRunning Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
-            disk_full = perform_pass(pass_info, device)
-            if disk_full:
-                print("Exiting loop as disk is full.")
-                return  # Exit the function if the disk is full
-        if not loop_mode:
-            break
+    for i, pass_info in enumerate(passes, start=1):
+        print(f"\nRunning Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
+        if perform_pass(pass_info, device):
+            print("Disk is full. Exiting.")
+            return  # Exit the function if the disk is full
+
+        if loop_mode:
+            print("Repeating passes in loop mode...")
+            while not perform_pass(pass_info, device):
+                pass
 
     print("\nDisk preparation completed.")
 
