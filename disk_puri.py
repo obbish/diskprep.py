@@ -51,8 +51,7 @@ def clear_terminal():
 def execute_command(command):
     """Run the dd command, display real-time output on a single line, and handle 'disk full' message."""
     try:
-        command_list = shlex.split(command)
-        process = subprocess.Popen(command_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         # Process output in real-time
         for line in process.stderr:
@@ -72,19 +71,19 @@ def execute_command(command):
             raise  # Re-raise unexpected errors
 
 def stream_source(pass_type, device, block_size, count=None):
-    """Build command for live data sources like random and zero."""
+    """Build command list for live data sources like random and zero."""
     if pass_type == "random":
-        command = f"dd if=/dev/urandom of={device} bs={block_size} status=progress"
+        command = ["dd", "if=/dev/urandom", f"of={device}", f"bs={block_size}", "status=progress"]
     elif pass_type == "zeros":
-        command = f"dd if=/dev/zero of={device} bs={block_size} status=progress"
+        command = ["dd", "if=/dev/zero", f"of={device}", f"bs={block_size}", "status=progress"]
     
     if count:
-        command += f" count={count}"
+        command.append(f"count={count}")
     
-    return command
+    return command  # Return a list instead of a string
 
 def path_source(pass_type, device, block_size, count=None, content=None):
-    """Build command for file-based data sources like ones, string, and file."""
+    """Build command list for file-based data sources like ones, string, and file."""
     temp_file = None
     
     if pass_type == "ones":
@@ -109,26 +108,46 @@ def path_source(pass_type, device, block_size, count=None, content=None):
             return None
     
     if count:
-        command = f"dd if={temp_file} of={device} bs={block_size} count={count} status=progress"
+        command = ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
     else:
-        command = f"while :; do cat {temp_file}; done | dd of={device} bs={block_size} status=progress"
+        command = ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", "status=progress"]
     
     return command
+
+def write_file_to_device_until_full(temp_file, device, block_size):
+    """Writes the contents of temp_file to the device repeatedly until disk space is exhausted."""
+    try:
+        with open(temp_file, "rb") as f, open(device, "wb") as dev:
+            while True:
+                chunk = f.read(block_size)
+                if not chunk:  # Rewind if end of file is reached
+                    f.seek(0)
+                    chunk = f.read(block_size)
+                dev.write(chunk)
+    except OSError as e:
+        if "No space left on device" in str(e):
+            print("\nDisk full; moving to the next pass.")
+        else:
+            print(f"Unexpected error: {e}")
+            raise  # Re-raise unexpected errors
 
 def perform_pass(pass_info, device):
     """Prepare and execute a pass with centralized error handling."""
     pass_type = pass_info["type"]
-    block_size = pass_info["block_size"]
+    block_size = int(pass_info["block_size"].rstrip("M")) * 1024 * 1024  # Convert '1M' to bytes for chunk size
     count = pass_info.get("count")
     content = pass_info.get("content")
 
+    # Get the command list directly
     if pass_type in ["random", "zeros"]:
-        command = stream_source(pass_type, device, block_size, count)
-    elif pass_type in ["ones", "string", "file"]:
-        command = path_source(pass_type, device, block_size, count, content)
-    
-    if command:
+        command = stream_source(pass_type, device, pass_info["block_size"], count)
         execute_command(command)
+    elif pass_type in ["ones", "string", "file"]:
+        temp_file = path_source(pass_type, device, pass_info["block_size"], count, content)
+        if temp_file and count is None:  # No count means "until full"
+            write_file_to_device_until_full(temp_file, device, block_size)
+        elif temp_file:
+            execute_command(temp_file)
 
 def configure_passes(device):
     """Allow users to create their own pass schema with real-time schema display."""
@@ -186,7 +205,7 @@ def configure_passes(device):
                 content_display = f" (File: {p['content']})"
             count_display = f", Count: {p['count']}" if p["count"] else ""
             print(f"{i}. Type: {p['type'].capitalize()}, Block Size: {p['block_size']}{count_display}{content_display}")
-    
+
 def main():
     clear_terminal()
     print("Multi-Pass Disk Preparation Script\n")
