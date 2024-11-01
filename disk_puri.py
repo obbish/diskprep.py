@@ -4,6 +4,7 @@ import subprocess
 import signal
 import shutil
 import io
+import pty
 
 class TempFileManager:
     def __init__(self):
@@ -40,31 +41,37 @@ def clear_terminal():
         print("\n" * 10)
 
 def execute_command(command, input_data):
-    """Run the dd command, display real-time output, and handle 'disk full' message."""
+    """Run the dd command with a PTY to display real-time output and handle 'disk full' messages."""
+    master_fd, slave_fd = pty.openpty()  # Create a pseudo-terminal
+    
     try:
-        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        # Continuously write data to the process's stdin in chunks until it completes or fails.
+        # Start the dd process, linking stdout and stderr to the PTY
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=slave_fd, stderr=slave_fd, text=True)
+        
+        # Feed the in-memory data to dd’s stdin in 1MB chunks
         while True:
-            # Write a chunk of input_data to the dd process
-            process.stdin.write(input_data.read())
-            process.stdin.flush()  # Ensure data is sent to dd
-            
-            # Check dd's stderr for progress updates and disk full messages
-            for line in iter(process.stderr.readline, ""):
-                if "No space left on device" in line:
-                    print("\nDisk full; stopping.")
-                    process.terminate()
-                    return True  # Signal disk is full
-                print(f"\r{line.strip()}", end='', flush=True)
+            chunk = input_data.read(1024 * 1024)  # 1MB chunks
+            if not chunk:
+                break
+            process.stdin.write(chunk)
+            process.stdin.flush()
 
-            if process.poll() is not None:
-                break  # Exit if dd process completes
-        print()
-        return False
+        os.close(slave_fd)  # Close slave end after writing is done
+
+        # Read and display real-time output from the PTY (dd’s progress)
+        while True:
+            output = os.read(master_fd, 1024).decode()  # Read from PTY in 1KB chunks
+            if not output:
+                break
+            print(output, end='', flush=True)
+
+        process.wait()
+        return process.returncode == 0
     except subprocess.CalledProcessError as e:
         print(f"Unexpected error: {e}")
         raise
+    finally:
+        os.close(master_fd)  # Ensure PTY master is closed
 
 def generate_temp_source_in_memory(pass_type, content=None, size_mb=64):
     """
@@ -168,16 +175,17 @@ def main():
         print("Exiting without changes.")
         sys.exit(1)
 
-    for i, pass_info in enumerate(passes, start=1):
-        print(f"\nRunning Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
-        if perform_pass(pass_info, device):
-            print("Disk is full. Exiting.")
-            return  # Exit the function if the disk is full
+    while True:
+        for i, pass_info in enumerate(passes, start=1):
+            print(f"\nRunning Pass {i}: Type: {pass_info['type'].capitalize()}, Block Size: {pass_info['block_size']}, Count: {pass_info['count'] or 'until full'}")
+            if perform_pass(pass_info, device):
+                print("Disk is full. Exiting.")
+                return  # Exit if the disk is full
 
-        if loop_mode:
-            print("Repeating passes in loop mode...")
-            while not perform_pass(pass_info, device):
-                pass
+        if not loop_mode:
+            break  # Exit after one iteration if not in loop mode
+
+        print("\nRepeating schema in loop mode...")
 
     print("\nDisk preparation completed.")
 
