@@ -3,20 +3,20 @@ import sys
 import subprocess
 import signal
 import shutil
+import io
 
 class TempFileManager:
     def __init__(self):
         self.temp_files = []
 
-    def add_temp_file(self, filename):
-        self.temp_files.append(filename)
-        if not os.path.isfile(filename):
-            open(filename, 'w').close()
+    def add_temp_file(self, file_obj):
+        """Track an in-memory file object for cleanup."""
+        self.temp_files.append(file_obj)
 
     def remove_temp_files(self):
+        """Clear all tracked in-memory file objects."""
         for temp_file in self.temp_files:
-            if os.path.isfile(temp_file):
-                os.remove(temp_file)
+            temp_file.close()
         self.temp_files.clear()
 
 temp_file_manager = TempFileManager()
@@ -57,40 +57,43 @@ def execute_command(command):
         print(f"Unexpected error: {e}")
         raise
 
-def prepare_temp_file(pass_type, content):
-    """Prepares a temp file with repeated data if needed."""
+def generate_temp_source_in_memory(pass_type, content=None, size_mb=64):
+    """
+    Generates an in-memory file-like object for source data.
+
+    Args:
+        pass_type (str): Type of data ('ones' for 0xFF, 'string' for text string).
+        content (str): Content for 'string' type, ignored for 'ones'.
+        size_mb (int): Size of the buffer in MB (default 64MB).
+        
+    Returns:
+        io.BytesIO: In-memory file object containing the source data.
+    """
+    size_bytes = size_mb * 1024 * 1024  # Convert MB to bytes
+    
     if pass_type == "ones":
-        temp_file = "ones_source.tmp"
-        if not os.path.isfile(temp_file):
-            with open(temp_file, "wb") as f:
-                f.write(b"\xFF" * (1024 * 1024 * 256))  # 256MB of 0xFF bytes
-        temp_file_manager.add_temp_file(temp_file)
-    elif pass_type == "string":
-        temp_file = "string_source.tmp"
-        if not os.path.isfile(temp_file):
-            with open(temp_file, "wb") as f:
-                chunk = content.encode()
-                full_repeats = (256 * 1024 * 1024) // len(chunk)
-                f.write(chunk * full_repeats)
-        temp_file_manager.add_temp_file(temp_file)
+        # Create a 64MB buffer of 0xFF bytes for "ones"
+        buffer = io.BytesIO(b"\xFF" * size_bytes)
+    elif pass_type == "string" and content:
+        # For strings, repeat the encoded content to fill 64MB
+        encoded_content = content.encode()
+        repeats_needed = size_bytes // len(encoded_content)
+        buffer = io.BytesIO(encoded_content * repeats_needed)
     else:
-        return None
-    return temp_file
+        raise ValueError("Unsupported pass type or missing content for 'string' pass.")
+
+    temp_file_manager.add_temp_file(buffer)
+    buffer.seek(0)  # Reset pointer to the start
+    return buffer
 
 def path_source(pass_type, device, block_size, count=None, content=None):
-    """Constructs the dd command."""
-    if pass_type in ["ones", "string"]:
-        temp_file = prepare_temp_file(pass_type, content)
-        if not temp_file:
-            return None
-        if count:
-            return ["dd", f"if={temp_file}", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
-        return ["bash", "-c", f"while true; do cat {temp_file}; done | dd of={device} bs={block_size} status=progress"]
-    elif pass_type == "random":
-        return ["dd", "if=/dev/urandom", f"of={device}", f"bs={block_size}", "status=progress", f"count={count}" if count else ""]
-    elif pass_type == "zeros":
-        return ["dd", "if=/dev/zero", f"of={device}", f"bs={block_size}", "status=progress", f"count={count}" if count else ""]
-    return None
+    """Constructs the dd command using in-memory source data."""
+    temp_file = generate_temp_source_in_memory(pass_type, content)
+    if not temp_file:
+        return None
+    if count:
+        return ["dd", f"if=/dev/stdin", f"of={device}", f"bs={block_size}", f"count={count}", "status=progress"]
+    return ["bash", "-c", f"while true; do cat /dev/stdin; done | dd of={device} bs={block_size} status=progress"]
 
 def perform_pass(pass_info, device):
     command = path_source(pass_info["type"], device, pass_info["block_size"], pass_info.get("count"), pass_info.get("content"))
@@ -109,9 +112,8 @@ def configure_passes(device):
         print("  (z)eros  - Writes zeros to the disk")
         print("  (o)nes   - Writes binary ones (0xFF) to the disk")
         print("  (s)tring - Repeats a specified text string across the disk")
-        print("  (f)ile   - Repeats the contents of a file across the disk")
         
-        pass_type = input("\nChoose a pass type to add (r, z, o, s, f), or type 'start' to execute once, or 'loop' to repeat: ").strip().lower()
+        pass_type = input("\nChoose a pass type to add (r, z, o, s), or type 'start' to execute once, or 'loop' to repeat: ").strip().lower()
         
         if pass_type == "start" or pass_type == "loop":
             return passes, pass_type == "loop"
@@ -123,24 +125,18 @@ def configure_passes(device):
             pass_type = "ones"
         elif pass_type == "s":
             pass_type = "string"
-        elif pass_type == "f":
-            pass_type = "file"
         else:
-            print("Invalid choice. Please enter one of the letters (r, z, o, s, f) or 'start'/'loop' to proceed.")
+            print("Invalid choice. Please enter one of the letters (r, z, o, s) or 'start'/'loop' to proceed.")
             continue
         
-        content = input("Enter a string to write to disk: ").strip() if pass_type == "string" else input("Enter the path to the source file: ").strip() if pass_type == "file" else None
-        if pass_type == "file" and not os.path.isfile(content):
-            print("Invalid file path. Please enter a valid file.")
-            continue
-
+        content = input("Enter a string to write to disk: ").strip() if pass_type == "string" else None
         block_size, count = input("Enter block size and count separated by a space (or press Enter for default 1M block size and fill disk): ").strip().split() or ("1M", None)
         passes.append({"type": pass_type, "content": content, "block_size": block_size, "count": count})
         
         clear_terminal()
         print(f"\nCurrent Pass Schema for drive: {device}")
         for i, p in enumerate(passes, start=1):
-            content_display = f" (String: {p['content'][:24]}...)" if p["type"] == "string" else f" (File: {p['content']})" if p["type"] == "file" else ""
+            content_display = f" (String: {p['content'][:24]}...)" if p["type"] == "string" else ""
             count_display = f", Count: {p['count']}" if p["count"] else ""
             print(f"{i}. Type: {p['type'].capitalize()}, Block Size: {p['block_size']}{count_display}{content_display}")
 
