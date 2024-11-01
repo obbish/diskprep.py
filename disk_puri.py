@@ -3,7 +3,6 @@ import sys
 import subprocess
 import signal
 import shutil
-import pty
 
 class TempFileManager:
     def __init__(self):
@@ -41,18 +40,20 @@ def clear_terminal():
         print("\n" * 10)
 
 def execute_command(command):
-    """Run the command with a pseudo-terminal to display real-time output for commands like 'dd'."""
+    """Run the dd command, display real-time output on a single line, and handle 'disk full' message."""
     try:
-        master_fd, slave_fd = pty.openpty()
-        process = subprocess.Popen(command, stdout=slave_fd, stderr=slave_fd, text=True)
-        os.close(slave_fd)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-        with os.fdopen(master_fd) as fd:
-            for line in fd:
-                print(f"\r{line.strip()}", end='', flush=True)
+        # Process output in real-time from stderr (where dd sends progress)
+        for line in process.stderr:
+            if "No space left on device" in line:
+                print("\nDisk full; moving to the next pass.")
+                process.terminate()
+                break
+            print(f"\r{line.strip()}", end='', flush=True)
 
-        process.wait()
-        print()
+        process.wait()  # Ensure the process completes fully
+        print()  # New line after completion
     except subprocess.CalledProcessError as e:
         print(f"Unexpected error: {e}")
         raise
